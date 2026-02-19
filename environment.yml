@@ -1,0 +1,5 @@
+name: partior
+channels:
+  - defaults
+dependencies:
+  - python=3.13

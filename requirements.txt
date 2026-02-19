@@ -1,0 +1,5 @@
+hvac 
+flask
+python-dotenv
+requests
+pytest
