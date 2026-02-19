@@ -38,7 +38,8 @@ class VaultClient:
             # Read secret from Vault
             response = self.client.secrets.kv.v2.read_secret_version(
                 path=path,
-                mount_point='secret'
+                mount_point='secret',
+                raise_on_deleted_version=False  # Added this line
             )
             
             # Extract the actual secret data
