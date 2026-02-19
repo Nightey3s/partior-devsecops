@@ -47,30 +47,62 @@ jobs:
           vault kv put secret/myapp/config \
           db_password="TestPassword123" \
           api_key="TEST-KEY-789"
+        
+        # Verify secret was stored
+        docker exec -e VAULT_ADDR="http://127.0.0.1:8200" -e VAULT_TOKEN='testtoken' vault \
+          vault kv get secret/myapp/config
     
     # Step 5: Run the Flask app in background
     - name: Start Flask app
       run: |
+        # Set environment variables
         export VAULT_ADDR=http://localhost:8200
         export VAULT_TOKEN=testtoken
-        # Run Flask in background and redirect output
-        nohup python app/main.py > flask.log 2>&1 &
         
-        # Wait for Flask to be ready (check if port 5000 is open)
-        echo "Waiting for Flask to start..."
+        echo "=== Starting Flask application ==="
+        echo "Environment:"
+        echo "  VAULT_ADDR: $VAULT_ADDR"
+        echo "  VAULT_TOKEN: $VAULT_TOKEN"
+        echo "  Python version: $(python --version)"
+        echo "  Working directory: $(pwd)"
+        
+        # Test if we can import the app first
+        echo "=== Testing imports ==="
+        python -c "from app.vault_client import VaultClient; print('✓ VaultClient imported')" || echo "✗ Failed to import VaultClient"
+        python -c "from app.main import app; print('✓ Flask app imported')" || echo "✗ Failed to import Flask app"
+        
+        # Start Flask in background with output to log file
+        echo "=== Starting Flask server ==="
+        python -c "from app.main import app; app.run(host='0.0.0.0', port=5000, debug=False)" > flask.log 2>&1 &
+        FLASK_PID=$!
+        echo "Flask started with PID: $FLASK_PID"
+        
+        # Wait for Flask to be ready
+        echo "=== Waiting for Flask to respond ==="
         for i in {1..30}; do
-          if curl -s http://localhost:5000/ > /dev/null; then
-            echo "Flask is ready!"
+          if curl -s http://localhost:5000/ > /dev/null 2>&1; then
+            echo "✓ Flask is ready after $i attempts!"
             break
           fi
-          echo "Attempt $i: Flask not ready yet..."
+          if [ $i -eq 30 ]; then
+            echo "✗ Flask failed to start after 30 attempts"
+            echo "=== Flask logs ==="
+            cat flask.log
+            echo "=== Checking if Flask process is running ==="
+            ps aux | grep python
+            exit 1
+          fi
+          echo "  Attempt $i/30: Flask not ready yet, waiting..."
           sleep 1
         done
         
-        # Show Flask logs for debugging
+        echo "=== Flask startup logs ==="
         cat flask.log
+        
+        echo "=== Testing Flask endpoints ==="
+        curl -v http://localhost:5000/ || echo "Failed to reach root endpoint"
       env:
-        FLASK_ENV: testing
+        FLASK_ENV: production
     
     # Step 6: Run tests
     - name: Run integration tests
