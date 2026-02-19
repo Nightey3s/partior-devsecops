@@ -3,7 +3,7 @@ Main Flask Application - Demonstrates secure secret retrieval
 """
 from flask import Flask, jsonify
 import os
-from vault_client import VaultClient
+from .vault_client import VaultClient
 
 app = Flask(__name__)
 
