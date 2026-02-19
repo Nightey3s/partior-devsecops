@@ -13,17 +13,25 @@ conda create -n partior
 ```
 
 ## Running Vault Locally
+```bash
 docker run -d --name vault-dev -p 8200:8200 -e VAULT_DEV_ROOT_TOKEN_ID=myroot hashicorp/vault:latest
+```
 
 ## Set environment variables so we can talk to Vault
+```bash
 export VAULT_ADDR="http://localhost:8200"
 export VAULT_TOKEN="myroot"
+```
 
 ## Store a secret
+```bash
 docker exec -e VAULT_ADDR="http://127.0.0.1:8200" -e VAULT_TOKEN='myroot' vault-dev vault kv put secret/myapp/config db_password="SuperSecretPassword123" api_key="ABC-XYZ-789"
+```
 
 ## Retreieve a secret
+```bash
 docker exec -e VAULT_ADDR='http://127.0.0.1:8200' -e VAULT_TOKEN='myroot' vault-dev vault kv get secret/myapp/config
+```
 
 ## Create structure
 ```bash
