@@ -110,3 +110,65 @@ jobs:
         export VAULT_ADDR=http://localhost:8200
         export VAULT_TOKEN=testtoken
         python -m pytest tests/ -v
+
+    # Step 7: Security Scanning - Dependency Vulnerabilities
+    - name: Scan dependencies for vulnerabilities
+      run: |
+        echo "=== Running pip-audit ==="
+        pip-audit --desc --format json --output pip-audit-report.json || true
+        
+        echo "=== pip-audit Results ==="
+        cat pip-audit-report.json
+        
+        # Check if any vulnerabilities found
+        VULN_COUNT=$(python -c "import json; data=json.load(open('pip-audit-report.json')); print(len(data.get('dependencies', [])))" 2>/dev/null || echo "0")
+        echo "Found $VULN_COUNT vulnerable dependencies"
+        
+        if [ "$VULN_COUNT" -gt "0" ]; then
+          echo "⚠️ Warning: Vulnerabilities detected in dependencies"
+          # For now, just warn - in production, you might want to fail the build
+        else
+          echo "✓ No known vulnerabilities found"
+        fi
+    
+    # Step 8: Security Scanning - Static Code Analysis
+    - name: Run Bandit security linter
+      run: |
+        echo "=== Running Bandit SAST ==="
+        bandit -r app/ -f json -o bandit-report.json || true
+        
+        echo "=== Bandit Results ==="
+        bandit -r app/ -f screen
+        
+        # Check severity
+        ISSUES=$(python -c "import json; data=json.load(open('bandit-report.json')); print(len(data['results']))" 2>/dev/null || echo "0")
+        echo "Found $ISSUES potential security issues"
+    
+    # Step 9: Upload security reports as artifacts
+    - name: Upload security reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: security-reports
+        path: |
+          pip-audit-report.json
+          bandit-report.json
+    
+    # Step 10: Build Docker image
+    - name: Build Docker image
+      run: |
+        docker build -t devsecops-demo:latest .
+    
+    # Step 11: Scan Docker image with Trivy
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: 'devsecops-demo:latest'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+    
+    - name: Upload Trivy results
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: 'trivy-results.sarif'
