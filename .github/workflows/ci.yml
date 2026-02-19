@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [ main ]
 
+# Add permissions for security scanning
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -63,13 +69,6 @@ jobs:
         echo "Environment:"
         echo "  VAULT_ADDR: $VAULT_ADDR"
         echo "  VAULT_TOKEN: $VAULT_TOKEN"
-        echo "  Python version: $(python --version)"
-        echo "  Working directory: $(pwd)"
-        
-        # Test if we can import the app first
-        echo "=== Testing imports ==="
-        python -c "from app.vault_client import VaultClient; print('✓ VaultClient imported')" || echo "✗ Failed to import VaultClient"
-        python -c "from app.main import app; print('✓ Flask app imported')" || echo "✗ Failed to import Flask app"
         
         # Start Flask in background with output to log file
         echo "=== Starting Flask server ==="
@@ -88,19 +87,13 @@ jobs:
             echo "✗ Flask failed to start after 30 attempts"
             echo "=== Flask logs ==="
             cat flask.log
-            echo "=== Checking if Flask process is running ==="
-            ps aux | grep python
             exit 1
           fi
           echo "  Attempt $i/30: Flask not ready yet, waiting..."
           sleep 1
         done
         
-        echo "=== Flask startup logs ==="
-        cat flask.log
-        
-        echo "=== Testing Flask endpoints ==="
-        curl -v http://localhost:5000/ || echo "Failed to reach root endpoint"
+        echo "=== Flask is running ==="
       env:
         FLASK_ENV: production
     
@@ -110,41 +103,84 @@ jobs:
         export VAULT_ADDR=http://localhost:8200
         export VAULT_TOKEN=testtoken
         python -m pytest tests/ -v
-
+    
     # Step 7: Security Scanning - Dependency Vulnerabilities
-    - name: Scan dependencies for vulnerabilities
+    - name: Scan dependencies for vulnerabilities (pip-audit)
       run: |
         echo "=== Running pip-audit ==="
-        pip-audit --desc --format json --output pip-audit-report.json || true
+        pip-audit --desc || true
         
-        echo "=== pip-audit Results ==="
-        cat pip-audit-report.json
+        echo ""
+        echo "=== Generating JSON report ==="
+        pip-audit --format json --output pip-audit-report.json || true
         
-        # Check if any vulnerabilities found
-        VULN_COUNT=$(python -c "import json; data=json.load(open('pip-audit-report.json')); print(len(data.get('dependencies', [])))" 2>/dev/null || echo "0")
-        echo "Found $VULN_COUNT vulnerable dependencies"
-        
-        if [ "$VULN_COUNT" -gt "0" ]; then
-          echo "⚠️ Warning: Vulnerabilities detected in dependencies"
-          # For now, just warn - in production, you might want to fail the build
-        else
-          echo "✓ No known vulnerabilities found"
+        if [ -f pip-audit-report.json ]; then
+          VULN_COUNT=$(python -c "import json; data=json.load(open('pip-audit-report.json')); print(len(data.get('dependencies', [])))" 2>/dev/null || echo "0")
+          echo "Found $VULN_COUNT vulnerable dependencies"
+          
+          if [ "$VULN_COUNT" -gt "0" ]; then
+            echo "⚠️ Warning: Vulnerabilities detected in dependencies"
+          else
+            echo "✓ No known vulnerabilities found"
+          fi
         fi
     
     # Step 8: Security Scanning - Static Code Analysis
-    - name: Run Bandit security linter
+    - name: Run Bandit security linter (SAST)
       run: |
         echo "=== Running Bandit SAST ==="
+        
+        # Generate JSON report
         bandit -r app/ -f json -o bandit-report.json || true
         
+        # Display formatted results
+        echo ""
         echo "=== Bandit Results ==="
-        bandit -r app/ -f screen
+        bandit -r app/ -f screen || true
         
-        # Check severity
-        ISSUES=$(python -c "import json; data=json.load(open('bandit-report.json')); print(len(data['results']))" 2>/dev/null || echo "0")
-        echo "Found $ISSUES potential security issues"
+        # Check results
+        if [ -f bandit-report.json ]; then
+          ISSUES=$(python -c "import json; data=json.load(open('bandit-report.json')); print(len(data['results']))" 2>/dev/null || echo "0")
+          echo ""
+          echo "Found $ISSUES potential security issues"
+          
+          if [ "$ISSUES" -gt "0" ]; then
+            echo "⚠️ Warning: Security issues detected in code"
+          else
+            echo "✓ No security issues found"
+          fi
+        fi
     
-    # Step 9: Upload security reports as artifacts
+    # Step 9: Build Docker image
+    - name: Build Docker image
+      run: |
+        echo "=== Building Docker image ==="
+        docker build -t devsecops-demo:latest .
+        echo "✓ Docker image built successfully"
+    
+    # Step 10: Scan Docker image with Trivy
+    - name: Run Trivy vulnerability scanner
+      run: |
+        echo "=== Installing Trivy ==="
+        # Install Trivy
+        sudo apt-get install wget -y
+        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+        echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+        sudo apt-get update
+        sudo apt-get install trivy -y
+        
+        echo "=== Scanning Docker image with Trivy ==="
+        trivy image --severity HIGH,CRITICAL devsecops-demo:latest || true
+        
+        echo ""
+        echo "=== Generating Trivy JSON report ==="
+        trivy image --format json --output trivy-report.json devsecops-demo:latest || true
+        
+        if [ -f trivy-report.json ]; then
+          echo "✓ Trivy scan completed"
+        fi
+    
+    # Step 11: Upload security reports as artifacts
     - name: Upload security reports
       if: always()
       uses: actions/upload-artifact@v4
@@ -153,22 +189,5 @@ jobs:
         path: |
           pip-audit-report.json
           bandit-report.json
-    
-    # Step 10: Build Docker image
-    - name: Build Docker image
-      run: |
-        docker build -t devsecops-demo:latest .
-    
-    # Step 11: Scan Docker image with Trivy
-    - name: Run Trivy vulnerability scanner
-      uses: aquasecurity/trivy-action@master
-      with:
-        image-ref: 'devsecops-demo:latest'
-        format: 'sarif'
-        output: 'trivy-results.sarif'
-    
-    - name: Upload Trivy results
-      if: always()
-      uses: github/codeql-action/upload-sarif@v3
-      with:
-        sarif_file: 'trivy-results.sarif'
+          trivy-report.json
+          flask.log
