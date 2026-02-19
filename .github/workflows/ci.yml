@@ -41,9 +41,7 @@ jobs:
         
         # Store test secret
         docker exec vault vault login testtoken
-        docker exec vault vault kv put secret/myapp/config \
-          db_password="TestPassword123" \
-          api_key="TEST-KEY-789"
+        docker exec -e VAULT_ADDR="http://127.0.0.1:8200" -e VAULT_TOKEN='myroot' vault-dev vault kv put secret/myapp/config db_password="TestPassword123" api_key="TEST-KEY-789"
     
     # Step 5: Run the Flask app in background
     - name: Start Flask app
