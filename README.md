@@ -12,6 +12,11 @@ conda env create -f environment.yml
 conda create -n partior
 ```
 
+### Installing dependencies
+```bash
+pip install -r requirements.txt
+```
+
 ## Running Vault Locally
 ```bash
 docker run -d --name vault-dev -p 8200:8200 -e VAULT_DEV_ROOT_TOKEN_ID=myroot hashicorp/vault:latest
